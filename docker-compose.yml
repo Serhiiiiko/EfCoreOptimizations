@@ -1,6 +1,7 @@
 ﻿version: '3.8'
 
 services:
+  # SQL Server Database
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: omt-mssql
@@ -12,6 +13,8 @@ services:
       - "1433:1433"
     volumes:
       - mssql-data:/var/opt/mssql
+    networks:
+      - efcore-network
     restart: always
     healthcheck:
       test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "Q7wa3xSyuKz9muGj9K4JEG2m" -Q "SELECT 1" || exit 1
@@ -20,5 +23,45 @@ services:
       retries: 10
       start_period: 30s
 
+  # Seq for Logging and Telemetry
+  seq:
+    image: datalust/seq:latest
+    container_name: ef-seq
+    environment:
+      ACCEPT_EULA: "Y"
+    ports:
+      - "5341:80"     # Seq UI
+      - "5342:5341"   # Seq ingestion
+    volumes:
+      - seq-data:/data
+    networks:
+      - efcore-network
+    restart: always
+
+  # EF Core Optimizations API
+  api:
+    build:
+      context: .
+      dockerfile: ./EfCoreOptimizations/Dockerfile
+    container_name: ef-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+    ports:
+      - "5000:8080"
+    depends_on:
+      mssql:
+        condition: service_healthy
+      seq:
+        condition: service_started
+    networks:
+      - efcore-network
+    restart: always
+
 volumes:
   mssql-data:
+  seq-data:
+
+networks:
+  efcore-network:
+    driver: bridge
