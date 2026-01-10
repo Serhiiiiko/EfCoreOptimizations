@@ -59,7 +59,7 @@ public class DataSeeder
         
         var categoryFaker = new Faker<Category>()
             .RuleFor(c => c.Name, f => f.Commerce.Department())
-            .RuleFor(c => c.Slug, (f, c) => c.Name.ToLower().Replace(" ", "-").Replace("&", "and"))
+            .RuleFor(c => c.Slug, (f, c) => c.Name.ToLower().Replace(" ", "-").Replace("&", "and") + "-" + f.Random.AlphaNumeric(6))
             .RuleFor(c => c.Description, f => f.Lorem.Sentence())
             .RuleFor(c => c.DisplayOrder, f => f.IndexFaker)
             .RuleFor(c => c.IsActive, f => f.Random.Bool(0.9f))
@@ -74,7 +74,7 @@ public class DataSeeder
         // Create subcategories
         var subCategoryFaker = new Faker<Category>()
             .RuleFor(c => c.Name, f => f.Commerce.ProductName())
-            .RuleFor(c => c.Slug, (f, c) => c.Name.ToLower().Replace(" ", "-"))
+            .RuleFor(c => c.Slug, (f, c) => c.Name.ToLower().Replace(" ", "-") + "-" + f.Random.AlphaNumeric(6))
             .RuleFor(c => c.Description, f => f.Lorem.Sentence())
             .RuleFor(c => c.DisplayOrder, f => f.IndexFaker)
             .RuleFor(c => c.IsActive, f => f.Random.Bool(0.85f))
@@ -138,8 +138,11 @@ public class DataSeeder
         var customerFaker = new Faker<Customer>()
             .RuleFor(c => c.FirstName, f => f.Name.FirstName())
             .RuleFor(c => c.LastName, f => f.Name.LastName())
-            .RuleFor(c => c.Email, (f, c) => f.Internet.Email(c.FirstName, c.LastName))
-            .RuleFor(c => c.Phone, f => f.Phone.PhoneNumber())
+            .RuleFor(c => c.Email, (f, c) => f.Internet.Email(c.FirstName, c.LastName, uniqueSuffix: f.Random.AlphaNumeric(6)))
+            .RuleFor(c => c.Phone, f => {
+                var phone = f.Phone.PhoneNumber();
+                return phone.Length > 20 ? phone.Substring(0, 20) : phone;
+            })
             .RuleFor(c => c.City, f => f.PickRandom(cities))
             .RuleFor(c => c.Country, f => f.PickRandom(countries))
             .RuleFor(c => c.DateOfBirth, f => f.Date.Past(50, DateTime.Now.AddYears(-18)))
