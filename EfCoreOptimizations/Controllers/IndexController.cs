@@ -205,56 +205,182 @@ public class IndexController : ControllerBase
     /// Loading multiple collections can cause cartesian product
     /// </summary>
     [HttpGet("bad/customer-with-all-data/{id}")]
-    public async Task<IActionResult> GetCustomerWithAllDataBad(int id)
+    public async Task<ActionResult<CustomerFullDto>> GetCustomerWithAllDataBad(int id)
     {
         var stopwatch = Stopwatch.StartNew();
-        
+
         // This can cause cartesian explosion
         var customer = await _context.Customers
             .Include(c => c.Orders)
                 .ThenInclude(o => o.OrderItems)
+                    .ThenInclude(oi => oi.Product)
             .Include(c => c.Reviews)
+                .ThenInclude(r => r.Product)
             .Include(c => c.Addresses)
             .FirstOrDefaultAsync(c => c.Id == id);
 
         stopwatch.Stop();
-        
+
         if (customer == null)
             return NotFound();
 
-        _logger.LogWarning("Query with multiple includes executed in {Ms}ms - Possible cartesian explosion", 
+        _logger.LogWarning("Query with multiple includes executed in {Ms}ms - Possible cartesian explosion",
             stopwatch.ElapsedMilliseconds);
 
-        return Ok(customer);
+        // Manual mapping to DTO (inefficient - data already loaded)
+        var result = new CustomerFullDto
+        {
+            Id = customer.Id,
+            FirstName = customer.FirstName,
+            LastName = customer.LastName,
+            Email = customer.Email,
+            Phone = customer.Phone,
+            City = customer.City,
+            Country = customer.Country,
+            DateOfBirth = customer.DateOfBirth,
+            CreatedAt = customer.CreatedAt,
+            LastLoginAt = customer.LastLoginAt,
+            IsActive = customer.IsActive,
+            CreditLimit = customer.CreditLimit,
+            TotalOrders = customer.TotalOrders,
+            Orders = customer.Orders.Select(o => new OrderWithItemsDto
+            {
+                Id = o.Id,
+                OrderNumber = o.OrderNumber,
+                OrderDate = o.OrderDate,
+                ShippedDate = o.ShippedDate,
+                Status = o.Status.ToString(),
+                TotalAmount = o.TotalAmount,
+                ShippingCost = o.ShippingCost,
+                Tax = o.Tax,
+                ShippingAddress = o.ShippingAddress,
+                BillingAddress = o.BillingAddress,
+                Items = o.OrderItems.Select(oi => new OrderItemDto
+                {
+                    Id = oi.Id,
+                    ProductName = oi.Product.Name,
+                    SKU = oi.Product.SKU,
+                    Quantity = oi.Quantity,
+                    UnitPrice = oi.UnitPrice,
+                    TotalPrice = oi.TotalPrice
+                }).ToList()
+            }).ToList(),
+            Reviews = customer.Reviews.Select(r => new CustomerReviewDto
+            {
+                Id = r.Id,
+                ProductName = r.Product.Name,
+                Rating = r.Rating,
+                Title = r.Title,
+                Comment = r.Comment,
+                CreatedAt = r.CreatedAt,
+                IsVerifiedPurchase = r.IsVerifiedPurchase
+            }).ToList(),
+            Addresses = customer.Addresses.Select(a => new AddressDto
+            {
+                Id = a.Id,
+                Street = a.Street,
+                City = a.City,
+                State = a.State,
+                Country = a.Country,
+                PostalCode = a.PostalCode,
+                IsDefault = a.IsDefault,
+                Type = a.Type.ToString()
+            }).ToList()
+        };
+
+        return Ok(result);
     }
 
     /// <summary>
-    /// GOOD: Split query to avoid cartesian explosion
+    /// GOOD: Split query to avoid cartesian explosion + projection to DTO
     /// Uses AsSplitQuery to execute separate queries for each collection
     /// </summary>
     [HttpGet("good/customer-with-all-data/{id}")]
-    public async Task<IActionResult> GetCustomerWithAllDataGood(int id)
+    public async Task<ActionResult<CustomerFullDto>> GetCustomerWithAllDataGood(int id)
     {
         var stopwatch = Stopwatch.StartNew();
-        
-        // AsSplitQuery executes separate queries for each Include
-        var customer = await _context.Customers
-            .AsSplitQuery() // ← This is the optimization!
-            .Include(c => c.Orders.Take(10))
-                .ThenInclude(o => o.OrderItems.Take(5))
-            .Include(c => c.Reviews.Take(5))
-            .Include(c => c.Addresses)
-            .FirstOrDefaultAsync(c => c.Id == id);
+
+        // Best approach: projection directly to DTO
+        var result = await _context.Customers
+            .AsNoTracking()
+            .AsSplitQuery()
+            .Where(c => c.Id == id)
+            .Select(c => new CustomerFullDto
+            {
+                Id = c.Id,
+                FirstName = c.FirstName,
+                LastName = c.LastName,
+                Email = c.Email,
+                Phone = c.Phone,
+                City = c.City,
+                Country = c.Country,
+                DateOfBirth = c.DateOfBirth,
+                CreatedAt = c.CreatedAt,
+                LastLoginAt = c.LastLoginAt,
+                IsActive = c.IsActive,
+                CreditLimit = c.CreditLimit,
+                TotalOrders = c.TotalOrders,
+                Orders = c.Orders
+                    .OrderByDescending(o => o.OrderDate)
+                    .Take(10)
+                    .Select(o => new OrderWithItemsDto
+                    {
+                        Id = o.Id,
+                        OrderNumber = o.OrderNumber,
+                        OrderDate = o.OrderDate,
+                        ShippedDate = o.ShippedDate,
+                        Status = o.Status.ToString(),
+                        TotalAmount = o.TotalAmount,
+                        ShippingCost = o.ShippingCost,
+                        Tax = o.Tax,
+                        ShippingAddress = o.ShippingAddress,
+                        BillingAddress = o.BillingAddress,
+                        Items = o.OrderItems.Take(5).Select(oi => new OrderItemDto
+                        {
+                            Id = oi.Id,
+                            ProductName = oi.Product.Name,
+                            SKU = oi.Product.SKU,
+                            Quantity = oi.Quantity,
+                            UnitPrice = oi.UnitPrice,
+                            TotalPrice = oi.TotalPrice
+                        }).ToList()
+                    }).ToList(),
+                Reviews = c.Reviews
+                    .OrderByDescending(r => r.CreatedAt)
+                    .Take(5)
+                    .Select(r => new CustomerReviewDto
+                    {
+                        Id = r.Id,
+                        ProductName = r.Product.Name,
+                        Rating = r.Rating,
+                        Title = r.Title,
+                        Comment = r.Comment,
+                        CreatedAt = r.CreatedAt,
+                        IsVerifiedPurchase = r.IsVerifiedPurchase
+                    }).ToList(),
+                Addresses = c.Addresses.Select(a => new AddressDto
+                {
+                    Id = a.Id,
+                    Street = a.Street,
+                    City = a.City,
+                    State = a.State,
+                    Country = a.Country,
+                    PostalCode = a.PostalCode,
+                    IsDefault = a.IsDefault,
+                    Type = a.Type.ToString()
+                }).ToList()
+            })
+            .FirstOrDefaultAsync();
 
         stopwatch.Stop();
-        
-        if (customer == null)
+
+        if (result == null)
             return NotFound();
 
-        _logger.LogInformation("Split query executed in {Ms}ms - Multiple smaller queries instead of cartesian product", 
+        _logger.LogInformation("Split query with projection executed in {Ms}ms - Optimal approach",
             stopwatch.ElapsedMilliseconds);
 
-        return Ok(customer);
+        return Ok(result);
     }
 
     /// <summary>
